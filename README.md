@@ -16,7 +16,13 @@ The key control is therefore:
 
 The router uses `Africa/Lagos` time and returns at most one due campaign record.
 
-## Workflow
+## Workflow Architecture
+
+The automation orchestrates campaign scheduling, campaign-day validation, recipient management, delivery routing, and status updates through n8n.
+
+![n8n Campaign Automation Workflow](screenshots/n8n-workflow.png)
+
+### Workflow Flow
 
 ```text
 Schedule Trigger
@@ -38,8 +44,7 @@ Schedule Trigger
                            Email              Email              Email
                               │                  │                  │
                               ▼                  ▼                  ▼
-                       Update status      Update status      Update status
-```
+                       Update Status      Update Status      Update Status
 
 ## Repository structure
 
