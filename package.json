@@ -1,0 +1,12 @@
+{
+  "name": "10-day-campaign-automation",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sanitized n8n + Google Sheets campaign automation with timezone-aware routing and idempotency safeguards.",
+  "scripts": {
+    "test": "node tests/current-day-router.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

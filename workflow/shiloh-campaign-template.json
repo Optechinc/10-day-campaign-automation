@@ -1,0 +1,1096 @@
+{
+  "name": "Shiloh Campaign",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a730799e-0da5-4eaa-bb95-81492cc160fb",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        256,
+        -64
+      ],
+      "id": "00b644eb-0707-42ad-a92f-e158659e3552",
+      "name": "Get row(s) in sheet"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// LICC SHILOH 10-DAY EMAIL CAMPAIGN\n// PRODUCTION EMAIL ROUTING\n// TIMEZONE: AFRICA/LAGOS\n// ============================================================\n//\n// EMAIL TYPES:\n//   advance_reminder\n//   pre_service_reminder\n//   post_service\n//\n// RULE:\n//   Only the relevant campaign day is processed.\n//\n//   ADVANCE:\n//   Tomorrow's service only.\n//\n//   PRE-SERVICE:\n//   Today's service only.\n//\n//   POST-SERVICE:\n//   Today's service only.\n// ============================================================\n\n\nconst results = [];\n\nconst now = new Date();\n\n\n// ============================================================\n// CURRENT NIGERIA TIME\n// ============================================================\n\nconst nigeriaParts = new Intl.DateTimeFormat('en-CA', {\n  timeZone: 'Africa/Lagos',\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit',\n  hour: '2-digit',\n  minute: '2-digit',\n  second: '2-digit',\n  hour12: false\n}).formatToParts(now);\n\nconst current = {};\n\nfor (const part of nigeriaParts) {\n  if (part.type !== 'literal') {\n    current[part.type] = part.value;\n  }\n}\n\nconst currentYear = Number(current.year);\nconst currentMonth = Number(current.month);\nconst currentDay = Number(current.day);\nconst currentHour = Number(current.hour);\nconst currentMinute = Number(current.minute);\nconst currentSecond = Number(current.second);\n\n\n// ============================================================\n// DATE KEY HELPER\n// ============================================================\n\nfunction dateKey(year, month, day) {\n  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;\n}\n\n\n// ============================================================\n// TODAY\n// ============================================================\n\nconst todayKey = dateKey(\n  currentYear,\n  currentMonth,\n  currentDay\n);\n\n\n// ============================================================\n// TOMORROW\n// ============================================================\n\nconst tomorrowDate = new Date(\n  Date.UTC(\n    currentYear,\n    currentMonth - 1,\n    currentDay\n  )\n);\n\ntomorrowDate.setUTCDate(\n  tomorrowDate.getUTCDate() + 1\n);\n\nconst tomorrowKey = dateKey(\n  tomorrowDate.getUTCFullYear(),\n  tomorrowDate.getUTCMonth() + 1,\n  tomorrowDate.getUTCDate()\n);\n\n\n// ============================================================\n// PARSE SHEET DATE\n// Example: 28-Aug-2026\n// ============================================================\n\nfunction parseDate(value) {\n\n  if (!value) return null;\n\n  const match = String(value)\n    .trim()\n    .match(/^(\\d{1,2})-([A-Za-z]{3})-(\\d{4})$/);\n\n  if (!match) return null;\n\n  const months = {\n    jan: 1,\n    feb: 2,\n    mar: 3,\n    apr: 4,\n    may: 5,\n    jun: 6,\n    jul: 7,\n    aug: 8,\n    sep: 9,\n    oct: 10,\n    nov: 11,\n    dec: 12\n  };\n\n  const month = months[match[2].toLowerCase()];\n\n  if (!month) return null;\n\n  return {\n    year: Number(match[3]),\n    month: month,\n    day: Number(match[1])\n  };\n}\n\n\n// ============================================================\n// PARSE SHEET TIME\n// Examples:\n// 5:30 PM\n// 10:30 AM\n// ============================================================\n\nfunction parseTime(value) {\n\n  if (!value) return null;\n\n  const match = String(value)\n    .trim()\n    .toUpperCase()\n    .match(/^(\\d{1,2}):(\\d{2})\\s*(AM|PM)$/);\n\n  if (!match) return null;\n\n  let hour = Number(match[1]);\n  const minute = Number(match[2]);\n  const ampm = match[3];\n\n  if (ampm === 'AM' && hour === 12) {\n    hour = 0;\n  }\n\n  if (ampm === 'PM' && hour !== 12) {\n    hour += 12;\n  }\n\n  return {\n    hour,\n    minute\n  };\n}\n\n\n// ============================================================\n// CONVERT DATE/TIME TO COMPARISON MINUTES\n// ============================================================\n\nfunction toMinutes(year, month, day, hour, minute) {\n\n  return Date.UTC(\n    year,\n    month - 1,\n    day,\n    hour,\n    minute,\n    0,\n    0\n  ) / 60000;\n}\n\n\n// ============================================================\n// CURRENT TIME\n// ============================================================\n\nconst currentMinutes = toMinutes(\n  currentYear,\n  currentMonth,\n  currentDay,\n  currentHour,\n  currentMinute\n);\n\n\n// ============================================================\n// PROCESS CAMPAIGN ROWS\n// ============================================================\n\nfor (const item of $input.all()) {\n\n  const row = item.json;\n\n  const dateParts = parseDate(row['Date']);\n  const timeParts = parseTime(row['Service Time']);\n\n  if (!dateParts || !timeParts) {\n    continue;\n  }\n\n\n  // ----------------------------------------------------------\n  // SERVICE DATE KEY\n  // ----------------------------------------------------------\n\n  const serviceDateKey = dateKey(\n    dateParts.year,\n    dateParts.month,\n    dateParts.day\n  );\n\n\n  // ----------------------------------------------------------\n  // SERVICE TIME\n  // ----------------------------------------------------------\n\n  const serviceMinutes = toMinutes(\n    dateParts.year,\n    dateParts.month,\n    dateParts.day,\n    timeParts.hour,\n    timeParts.minute\n  );\n\n\n  // ----------------------------------------------------------\n  // EMAIL WINDOWS\n  // ----------------------------------------------------------\n\n  const advanceStart =\n    serviceMinutes - (24 * 60);\n\n  const advanceEnd =\n    serviceMinutes - (2 * 60);\n\n  const preServiceStart =\n    serviceMinutes - (2 * 60);\n\n  const preServiceEnd =\n    serviceMinutes - (90);\n\n\n  // ----------------------------------------------------------\n  // CURRENT STATUS\n  // ----------------------------------------------------------\n\n  const advanceStatus =\n    String(row['Advance Reminder'] || '')\n      .trim()\n      .toLowerCase();\n\n  const preServiceStatus =\n    String(row['Pre-Service Reminder'] || '')\n      .trim()\n      .toLowerCase();\n\n  const postServiceReady =\n    String(row['Post-Service Ready'] || '')\n      .trim()\n      .toLowerCase();\n\n  const postServiceSentAt =\n    String(row['Post-Service Sent At'] || '')\n      .trim();\n\n\n  // ----------------------------------------------------------\n  // EMAIL TYPE\n  // ----------------------------------------------------------\n\n  let emailType = null;\n\n\n  // ==========================================================\n  // 1. ADVANCE REMINDER\n  // ONLY TOMORROW'S SERVICE\n  // ==========================================================\n\n  if (\n    advanceStatus !== 'sent' &&\n    serviceDateKey === tomorrowKey &&\n    currentMinutes >= advanceStart &&\n    currentMinutes < advanceEnd\n  ) {\n\n    emailType = 'advance_reminder';\n\n  }\n\n\n  // ==========================================================\n  // 2. PRE-SERVICE REMINDER\n  // ONLY TODAY'S SERVICE\n  // ==========================================================\n\n  else if (\n    preServiceStatus !== 'sent' &&\n    serviceDateKey === todayKey &&\n    currentMinutes >= preServiceStart &&\n    currentMinutes < preServiceEnd\n  ) {\n\n    emailType = 'pre_service_reminder';\n\n  }\n\n\n  // ==========================================================\n  // 3. POST-SERVICE\n  // ONLY TODAY'S SERVICE\n  // ==========================================================\n\n  else if (\n    postServiceReady === 'ready' &&\n    postServiceSentAt === '' &&\n    serviceDateKey === todayKey &&\n    currentMinutes >= serviceMinutes\n  ) {\n\n    emailType = 'post_service';\n\n  }\n\n\n  // ==========================================================\n  // OUTPUT ONLY WHEN SOMETHING IS DUE\n  // ==========================================================\n\n  if (emailType) {\n\n    results.push({\n      json: {\n\n        ...row,\n\n        emailType,\n\n        testMode: false,\n\n        nigeriaDate: todayKey,\n\n        nigeriaTime:\n          `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}:${String(currentSecond).padStart(2, '0')}`,\n\n        serviceDate:\n          serviceDateKey,\n\n        serviceTime:\n          `${String(timeParts.hour).padStart(2, '0')}:${String(timeParts.minute).padStart(2, '0')}`,\n\n        isCurrentlyInAdvanceWindow:\n          currentMinutes >= advanceStart &&\n          currentMinutes < advanceEnd,\n\n        isCurrentlyInPreServiceWindow:\n          currentMinutes >= preServiceStart &&\n          currentMinutes < preServiceEnd,\n\n        isPostServiceWindow:\n          currentMinutes >= serviceMinutes\n      }\n    });\n  }\n}\n\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        -16
+      ],
+      "id": "b693af1f-4c3e-47a3-ab1b-6264926198fb",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        400,
+        128
+      ],
+      "id": "25ef35aa-d13f-41ff-90b4-72fbe66c45d8",
+      "name": "Get row(s) in sheet1"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        736,
+        80
+      ],
+      "id": "6633e418-6113-48f9-a432-5e229066a435",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.emailType }}",
+                    "rightValue": "advance_reminder",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "6604ca44-75a7-4f2b-b9d1-379648b43446"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Advance Reminder"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "69304fe7-bf0b-4334-8a0a-497a15ffb7ae",
+                    "leftValue": "={{ $json.emailType }}",
+                    "rightValue": "pre_service_reminder",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Pre-Service Reminder"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "2a64ea66-e1a2-444a-85f5-5a73c1a636ad",
+                    "leftValue": "={{ $json.emailType }}",
+                    "rightValue": "post_service",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Post_service"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": false
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1152,
+        -48
+      ],
+      "id": "e72b5687-9a14-4f96-9a3c-6ccc8f36f708",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.testMode === true ? \"recipient@example.com\" : $json.Email }}",
+        "subject": "=10 Days at Shiloh 2026 – Day {{ $json.Day }} is Coming",
+        "message": "= <div style=\"font-family: Arial, sans-serif; color: #333333; line-height: 1.6;\">\n\n  <h2>10 Days at Shiloh 2026</h2>\n\n  <p><strong>TEST EMAIL — LICC SHILOH CAMPAIGN</strong></p>\n\n  <p>Dear {{ $json[\"First Name\"] }},</p>\n\n  <p>\n    We are excited to invite you to join us for\n    <strong>10 Days at Shiloh 2026</strong>.\n  </p>\n\n  <p>\n    The program begins on <strong>{{ $json[\"Date\"] }}</strong>\n    and continues for 10 days.\n  </p>\n\n  <p>\n    <strong>Day:</strong> {{ $json[\"Day\"] }}<br>\n    <strong>Time:</strong> {{ $json[\"Service Time\"] }} daily<br>\n    <strong>Venue:</strong> LICC Cathedral, Samonda – UI Road, Ibadan\n  </p>\n\n  <p>\n    <strong>Theme:</strong> Come &amp; See — John 1:45–46\n  </p>\n\n  <p>\n    Free buses will be available.\n  </p>\n\n  <p>\n    Come expecting God to speak, transform and renew.\n    We encourage you to make plans to attend and invite someone along.\n  </p>\n\n  <p>\n    We look forward to seeing you.\n  </p>\n\n  <p>\n    <strong>Lighthouse International Christian Centre</strong>\n  </p>\n\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2032,
+        -464
+      ],
+      "id": "914d15e4-8b50-4519-8083-e2c190b04f67",
+      "name": "Send a message",
+      "webhookId": "a3c3f208-07f6-4e47-a01b-799baa7eef5a"
+    },
+    {
+      "parameters": {
+        "maxItems": 102
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        -288
+      ],
+      "id": "5a33a2f5-fc92-43c8-8c4e-1d5f83006aea",
+      "name": "Limit"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.testMode === true ? \"recipient@example.com\" : $json.Email }}",
+        "subject": "=10 Days at Shiloh 2026 – Day {{ $json.Day }} is Today",
+        "message": "=<div style=\"font-family: Arial, sans-serif; color: #333333; line-height: 1.6; max-width: 650px; margin: auto;\">\n\n  <p><strong>TEST EMAIL — LICC SHILOH CAMPAIGN</strong></p>\n\n  <h2>10 Days at Shiloh 2026 — Day {{ $json[\"Day\"] }}</h2>\n\n  <p>Dear {{ $json[\"First Name\"] }},</p>\n\n  <p>\n    <strong>Today is Day {{ $json[\"Day\"] }} of 10 Days at Shiloh 2026.</strong>\n  </p>\n\n  <p>\n    We invite you to join us today for a powerful time in God's presence.\n  </p>\n\n  <p>\n    <strong>Time:</strong> {{ $json[\"Service Time\"] }}<br>\n    <strong>Venue:</strong> LICC Cathedral, Samonda – UI Road, Ibadan\n  </p>\n\n  <p>\n    <strong>Theme:</strong> Come &amp; See — John 1:45–46\n  </p>\n\n  <p>\n    Free buses will be available.\n  </p>\n\n  <p>\n    Make plans to be there and invite someone to come with you.\n    We look forward to seeing you today.\n  </p>\n\n  <p>\n    <strong>Lighthouse International Christian Centre</strong>\n  </p>\n\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1760,
+        48
+      ],
+      "id": "f97c5672-4440-4f74-937d-b60d2e8df310",
+      "name": "Send a message1",
+      "webhookId": "e36502bd-26ae-4183-b600-ca8fb53c90d4"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        1536,
+        -32
+      ],
+      "id": "e2f08773-9b5d-4490-a0fe-0a56522d622d",
+      "name": "Limit1"
+    },
+    {
+      "parameters": {
+        "maxItems": 200
+      },
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        1376,
+        240
+      ],
+      "id": "0adb5230-2cf9-45b6-b076-2516c8057ee0",
+      "name": "Limit2"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.Email }}",
+        "subject": "=10 Days at Shiloh 2026 – Day {{ $json.Day }} \n Watch & Listen",
+        "message": "=<div style=\"margin:0; padding:0; background-color:#f5f5f5; font-family:Arial, Helvetica, sans-serif; color:#333333;\">\n\n  <div style=\"max-width:650px; margin:0 auto; background-color:#ffffff;\">\n\n    <!-- Header -->\n    <div style=\"padding:30px 30px 20px; text-align:center; border-bottom:1px solid #eeeeee;\">\n      \n      <h1 style=\"margin:0; font-size:26px; line-height:1.3; color:#222222;\">\n        10 Days at Shiloh 2026\n      </h1>\n\n      <p style=\"margin:8px 0 0; font-size:16px; color:#666666;\">\n        Day {{$json[\"Day\"]}}\n      </p>\n\n    </div>\n\n\n    <!-- Email Body -->\n    <div style=\"padding:30px; font-size:16px; line-height:1.7;\">\n\n      <!-- Greeting -->\n      <p style=\"margin:0 0 20px;\">\n        Dear <strong>{{$json[\"First Name\"] || \"Friend\"}}</strong>,\n      </p>\n\n\n      <!-- Thank You -->\n      <p style=\"margin:0 0 20px;\">\n        Thank you for being part of\n        <strong>10 Days at Shiloh 2026 – Day {{$json[\"Day\"]}}</strong>.\n      </p>\n\n\n      <!-- Blessing -->\n      <p style=\"margin:0 0 20px;\">\n        We hope you were blessed by today's program.\n      </p>\n\n\n      <!-- Replay Introduction -->\n      <p style=\"margin:0 0 25px;\">\n        If you were unable to join the service live, you can still listen or watch using the links below:\n      </p>\n\n\n      <!-- Listen Button -->\n      <div style=\"margin:0 0 14px 0;\">\n        \n        <a href=\"{{$json[\"Listen Link\"]}}\"\n           style=\"display:inline-block;\n                  width:190px;\n                  padding:14px 0;\n                  background-color:#197d8a;\n                  color:#ffffff;\n                  text-decoration:none;\n                  text-align:center;\n                  border-radius:6px;\n                  font-size:15px;\n                  font-weight:bold;\">\n          \n          🎧 Listen to today's message\n          \n        </a>\n\n      </div>\n\n\n      <!-- Watch Button -->\n      <div style=\"margin:0 0 25px 0;\">\n        \n        <a href=\"{{$json[\"Watch Link\"]}}\"\n           style=\"display:inline-block;\n                  width:190px;\n                  padding:14px 0;\n                  background-color:#e67e00;\n                  color:#ffffff;\n                  text-decoration:none;\n                  text-align:center;\n                  border-radius:6px;\n                  font-size:15px;\n                  font-weight:bold;\">\n          \n          ▶️ Watch today's message\n          \n        </a>\n\n      </div>\n\n\n      <!-- Journey Message -->\n      <p style=\"margin:0 0 20px;\">\n        Please continue to stay connected as we journey through the remaining days of\n        <strong>10 Days at Shiloh 2026</strong>.\n      </p>\n\n\n      <!-- Closing -->\n      <p style=\"margin:0 0 20px;\">\n        We look forward to having you with us again tomorrow.\n      </p>\n\n\n      <!-- Signature -->\n      <p style=\"margin:25px 0 0;\">\n        Best regards,<br>\n        <strong>Publicity and Public Relations Crew</strong><br>\n        Lighthouse International Christian Centre\n      </p>\n\n    </div>\n\n  </div>\n\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1664,
+        224
+      ],
+      "id": "f0561263-16b7-4008-b910-2bc812013c4b",
+      "name": "Send a message2",
+      "webhookId": "8f30e4e1-f1fb-427a-9776-fb2a0b531f5c"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b1da0422-9e01-4f58-aa8c-59509c75c2d1",
+              "leftValue": "={{\n  $json.emailType === \"advance_reminder\"\n    ? ($json[\"Advance Reminder\"] || \"\")\n    : $json.emailType === \"pre_service_reminder\"\n      ? ($json[\"Pre-Service Reminder\"] || \"\")\n      : $json.emailType === \"post_service\"\n        ? ($json[\"Post-Service Sent At\"] ? \"Sent\" : \"\")\n        : \"\"\n}}",
+              "rightValue": "=Sent",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        944,
+        80
+      ],
+      "id": "e63de7ec-0d14-43f4-9518-757632779bc6",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Day": "={{ $('Code in JavaScript').item.json.Day }}",
+            "Advance Reminder": "Sent",
+            "Advance Reminder Sent At": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [
+            "Day"
+          ],
+          "schema": [
+            {
+              "id": "Day",
+              "displayName": "Day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Service Time",
+              "displayName": "Service Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Subject",
+              "displayName": "Subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Daily Message",
+              "displayName": "Daily Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Advance Reminder",
+              "displayName": "Advance Reminder",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Advance Reminder Sent At",
+              "displayName": "Advance Reminder Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pre-Service Reminder",
+              "displayName": "Pre-Service Reminder",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Pre-Service Sent At",
+              "displayName": "Pre-Service Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Listen Link",
+              "displayName": "Listen Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Watch Link",
+              "displayName": "Watch Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Post-Service Ready",
+              "displayName": "Post-Service Ready",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Post-Service Sent At",
+              "displayName": "Post-Service Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1952,
+        -176
+      ],
+      "id": "14a596e2-09be-44b5-9c3f-8a1fe1886797",
+      "name": "Update row in sheet"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Day",
+              "displayName": "Day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Service Time",
+              "displayName": "Service Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Subject",
+              "displayName": "Subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Daily Message",
+              "displayName": "Daily Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Advance Reminder",
+              "displayName": "Advance Reminder",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Advance Reminder Sent At",
+              "displayName": "Advance Reminder Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pre-Service Reminder",
+              "displayName": "Pre-Service Reminder",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pre-Service Sent At",
+              "displayName": "Pre-Service Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Listen Link",
+              "displayName": "Listen Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Watch Link",
+              "displayName": "Watch Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Post-Service Ready",
+              "displayName": "Post-Service Ready",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Post-Service Sent At",
+              "displayName": "Post-Service Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2000,
+        208
+      ],
+      "id": "0cdb87c9-25a1-404c-adbe-0158cefd7221",
+      "name": "Update row in sheet1"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "REPLACE_WITH_GOOGLE_SHEET_ID_OR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "REPLACE_WITH_SHEET_NAME",
+          "cachedResultUrl": "REPLACE_WITH_GOOGLE_SHEET_URL"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Day": "={{ $('If').item.json.Day }}",
+            "Pre-Service Reminder": "Sent",
+            "Pre-Service Sent At": "={{ $now }}"
+          },
+          "matchingColumns": [
+            "Day"
+          ],
+          "schema": [
+            {
+              "id": "Day",
+              "displayName": "Day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Service Time",
+              "displayName": "Service Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Subject",
+              "displayName": "Subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Daily Message",
+              "displayName": "Daily Message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Advance Reminder",
+              "displayName": "Advance Reminder",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Advance Reminder Sent At",
+              "displayName": "Advance Reminder Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Pre-Service Reminder",
+              "displayName": "Pre-Service Reminder",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Pre-Service Sent At",
+              "displayName": "Pre-Service Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Listen Link",
+              "displayName": "Listen Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Watch Link",
+              "displayName": "Watch Link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Post-Service Ready",
+              "displayName": "Post-Service Ready",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Post-Service Sent At",
+              "displayName": "Post-Service Sent At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1968,
+        48
+      ],
+      "id": "7b38461f-82cf-4345-adec-69fc132477f4",
+      "name": "Update row in sheet2"
+    },
+    {
+      "parameters": {
+        "fromEmail": "Campaign Sender <sender@example.com>",
+        "toEmail": "={{ $json.Email }}",
+        "subject": "=10 Days at Shiloh 2026 – Day {{ $json.Day }} is Coming",
+        "html": "=<div style=\"margin:0; padding:0; background-color:#f5f5f5; font-family:Arial, Helvetica, sans-serif; color:#333333;\">\n\n  <div style=\"max-width:650px; margin:0 auto; background-color:#ffffff;\">\n\n    <!-- Header -->\n    <div style=\"padding:28px 30px; text-align:center; border-bottom:1px solid #eeeeee;\">\n      <h1 style=\"margin:0; font-size:24px; line-height:1.3; color:#222222;\">\n        10 Days at Shiloh 2026\n      </h1>\n    </div>\n\n    <!-- Email Body -->\n    <div style=\"padding:30px;\">\n\n      <p style=\"margin:0 0 20px 0; font-size:16px; line-height:1.7;\">\n        Dear <strong>{{ $json[\"First Name\"] || \"Friend\" }}</strong>,\n      </p>\n\n      <p style=\"margin:0 0 20px 0; font-size:16px; line-height:1.7;\">\n        We are excited to invite you to join us for\n        <strong>10 Days at Shiloh 2026</strong>.\n      </p>\n\n      <p style=\"margin:0 0 24px 0; font-size:16px; line-height:1.7;\">\n        The program begins tomorrow\n        <strong>{{ $json[\"Date\"] }}</strong>\n        and continues for 10 days.\n      </p>\n\n      <!-- Program Details -->\n      <div style=\"margin:0 0 25px 0; padding:20px; background-color:#f7f7f7; border-left:4px solid #555555;\">\n\n        <p style=\"margin:0 0 10px 0; font-size:16px; line-height:1.6;\">\n          <strong>Day:</strong> {{ $json[\"Day\"] }}\n        </p>\n\n        <p style=\"margin:0 0 10px 0; font-size:16px; line-height:1.6;\">\n          <strong>Time:</strong> {{ $json[\"Service Time\"] }}\n        </p>\n\n        <p style=\"margin:0 0 10px 0; font-size:16px; line-height:1.6;\">\n          <strong>Venue:</strong> Light Cathedral, Samonda – UI Road, Ibadan\n        </p>\n\n        <p style=\"margin:0; font-size:16px; line-height:1.6;\">\n          <strong>Theme:</strong> Come &amp; See – John 1:45–46\n        </p>\n\n      </div>\n\n      <p style=\"margin:0 0 20px 0; font-size:16px; line-height:1.7;\">\n        <strong>Free buses will be available.</strong>\n      </p>\n\n      <p style=\"margin:0 0 20px 0; font-size:16px; line-height:1.7;\">\n        Come with great expectations as God is set to speak, transform and make\n        your life anew.\n      </p>\n\n      <p style=\"margin:0 0 25px 0; font-size:16px; line-height:1.7;\">\n        We encourage you to attend promptly and invite someone along.\n      </p>\n\n      <p style=\"margin:0 0 25px 0; font-size:16px; line-height:1.7;\">\n        We look forward to seeing you.\n      </p>\n\n      <p style=\"margin:0 0 25px 0; font-size:16px; line-height:1.7;\">\n        Thank you.\n      </p>\n\n      <!-- Signature -->\n      <p style=\"margin:0; font-size:16px; line-height:1.7;\">\n        <strong>Publicity and Public Relations Crew</strong><br>\n        Lighthouse International Christian Centre\n      </p>\n\n    </div>\n\n    <!-- Footer -->\n    <div style=\"padding:18px 30px; text-align:center; background-color:#f7f7f7; border-top:1px solid #eeeeee;\">\n      <p style=\"margin:0; font-size:13px; color:#777777;\">\n        Lighthouse International Christian Centre (LICC)\n      </p>\n    </div>\n\n  </div>\n\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1648,
+        -288
+      ],
+      "id": "22317eb5-4cc8-4dbd-acf7-67cfab66bfd8",
+      "name": "Send an Email",
+      "webhookId": "09fba95c-f4dc-4bb5-9669-41aa6f33f89c"
+    },
+    {
+      "parameters": {
+        "fromEmail": "Campaign Sender <sender@example.com>",
+        "toEmail": "={{ $json.Email }}",
+        "subject": "=10 Days at Shiloh 2026 – Day {{ $json.Day }}   Watch & Listen",
+        "html": "=<div style=\"margin:0; padding:0; background-color:#f5f5f5; font-family:Arial, Helvetica, sans-serif; color:#333333;\">\n\n  <div style=\"max-width:650px; margin:0 auto; background-color:#ffffff;\">\n\n    <!-- Header -->\n    <div style=\"padding:30px 30px 20px; text-align:center; border-bottom:1px solid #eeeeee;\">\n      \n      <h1 style=\"margin:0; font-size:26px; line-height:1.3; color:#222222;\">\n        10 Days at Shiloh 2026\n      </h1>\n\n      <p style=\"margin:8px 0 0; font-size:16px; color:#666666;\">\n        Day {{$json[\"Day\"]}}\n      </p>\n\n    </div>\n\n\n    <!-- Email Body -->\n    <div style=\"padding:30px; font-size:16px; line-height:1.7;\">\n\n      <!-- Greeting -->\n      <p style=\"margin:0 0 20px;\">\n        Dear <strong>{{$json[\"First Name\"] || \"Friend\"}}</strong>,\n      </p>\n\n\n      <!-- Thank You -->\n      <p style=\"margin:0 0 20px;\">\n        Thank you for being part of\n        <strong>10 Days at Shiloh 2026 – Day {{$json[\"Day\"]}}</strong>.\n      </p>\n\n\n      <!-- Blessing -->\n      <p style=\"margin:0 0 20px;\">\n        We hope you were blessed by today's program.\n      </p>\n\n\n      <!-- Replay Introduction -->\n      <p style=\"margin:0 0 25px;\">\n        If you were unable to join the service live, you can still listen or watch using the links below:\n      </p>\n\n\n      <!-- Listen Button -->\n      <div style=\"margin:0 0 14px 0;\">\n        \n        <a href=\"{{$json[\"Listen Link\"]}}\"\n           style=\"display:inline-block;\n                  width:190px;\n                  padding:14px 0;\n                  background-color:#197d8a;\n                  color:#ffffff;\n                  text-decoration:none;\n                  text-align:center;\n                  border-radius:6px;\n                  font-size:15px;\n                  font-weight:bold;\">\n          \n          🎧 Listen to today's message\n          \n        </a>\n\n      </div>\n\n\n      <!-- Watch Button -->\n      <div style=\"margin:0 0 25px 0;\">\n        \n        <a href=\"{{$json[\"Watch Link\"]}}\"\n           style=\"display:inline-block;\n                  width:190px;\n                  padding:14px 0;\n                  background-color:#e67e00;\n                  color:#ffffff;\n                  text-decoration:none;\n                  text-align:center;\n                  border-radius:6px;\n                  font-size:15px;\n                  font-weight:bold;\">\n          \n          ▶️ Watch today's message\n          \n        </a>\n\n      </div>\n\n\n      <!-- Journey Message -->\n      <p style=\"margin:0 0 20px;\">\n        Please continue to stay connected as we journey through the remaining days of\n        <strong>10 Days at Shiloh 2026</strong>.\n      </p>\n\n\n      <!-- Closing -->\n      <p style=\"margin:0 0 20px;\">\n        We look forward to having you with us again tomorrow.\n      </p>\n\n\n      <!-- Signature -->\n      <p style=\"margin:25px 0 0;\">\n        Best regards,<br>\n        <strong>Publicity and Public Relations Crew</strong><br>\n        Lighthouse International Christian Centre\n      </p>\n\n    </div>\n\n  </div>\n\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1648,
+        432
+      ],
+      "id": "70cb02e3-7693-4c86-aa7b-133856f7a3e6",
+      "name": "Send an Email1",
+      "webhookId": "1f12d2f5-a6ef-4eaf-a6e5-31c8f3f4225e"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -224,
+        -512
+      ],
+      "typeVersion": 1,
+      "id": "161a4755-1ede-450f-8b6e-baa565a6bc5e",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get row(s) in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Limit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Limit1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Limit2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit": {
+      "main": [
+        [
+          {
+            "node": "Send an Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit1": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit2": {
+      "main": [
+        [
+          {
+            "node": "Send a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        []
+      ]
+    },
+    "Send a message2": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message1": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        []
+      ]
+    },
+    "Send an Email": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send an Email1": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "Africa/Lagos",
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
